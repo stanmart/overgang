@@ -556,7 +556,7 @@ func (b *Bridge) SetDevice(ctx context.Context, id int, body map[string]any) err
 		if !ok {
 			return ErrReadOnly
 		}
-		return b.call(ctx, "cover", "set_cover_position", d.Entity, map[string]any{"position": 100 - pos})
+		return b.call(ctx, "cover", "set_cover_position", d.Entity, map[string]any{"position": 100 - clamp(pos, 0, 100)})
 	}
 	return ErrReadOnly
 }
@@ -629,10 +629,11 @@ func (b *Bridge) call(ctx context.Context, domain, service, entityID string, dat
 }
 
 // lightCommand turns the app's light settings into a light.turn_on or turn_off call.
+// Every value is clamped to its range first: they come from the network.
 func lightCommand(s map[string]any) (string, map[string]any, error) {
 	data := map[string]any{}
 	if tr, ok := intVal(s, t.AttrTransition); ok {
-		data["transition"] = float64(tr) / 10
+		data["transition"] = float64(clamp(tr, 0, maxTransition)) / 10
 	}
 	if on, ok := intVal(s, t.AttrOnOff); ok && on == 0 {
 		return "turn_off", data, nil
@@ -641,7 +642,7 @@ func lightCommand(s map[string]any) (string, map[string]any, error) {
 		if dim <= 0 {
 			return "turn_off", data, nil
 		}
-		data["brightness"] = fromDimmer(dim)
+		data["brightness"] = fromDimmer(min(dim, t.MaxDimmer))
 	}
 	hex, hasHex := s[t.AttrColorHex].(string)
 	x, hasX := intVal(s, t.AttrColorX)
@@ -649,6 +650,7 @@ func lightCommand(s map[string]any) (string, map[string]any, error) {
 	hue, hasHue := intVal(s, t.AttrHue)
 	sat, hasSat := intVal(s, t.AttrSaturation)
 	if mireds, ok := intVal(s, t.AttrColorTemp); ok && mireds > 0 {
+		mireds = clamp(mireds, minAcceptedMireds, maxAcceptedMireds)
 		data["color_temp_kelvin"] = int(math.Round(1e6 / float64(mireds)))
 	} else if hasHex {
 		if mireds, ok := t.PresetMireds(hex); ok {
@@ -661,8 +663,10 @@ func lightCommand(s map[string]any) (string, map[string]any, error) {
 			data["xy_color"] = []float64{round4(x), round4(y)}
 		}
 	} else if hasX && hasY {
+		x, y = clamp(x, 0, t.MaxColor), clamp(y, 0, t.MaxColor)
 		data["xy_color"] = []float64{round4(float64(x) / t.MaxColor), round4(float64(y) / t.MaxColor)}
 	} else if hasHue && hasSat {
+		hue, sat = clamp(hue, 0, t.MaxColor), clamp(sat, 0, t.MaxSaturation)
 		data["hs_color"] = []float64{float64(hue) / t.MaxColor * 360, float64(sat) / t.MaxSaturation * 100}
 	}
 	return "turn_on", data, nil
@@ -748,6 +752,18 @@ func toDimmer(brightness float64) int {
 
 func fromDimmer(dimmer int) int {
 	return int(math.Round(float64(dimmer) * 255 / t.MaxDimmer))
+}
+
+// Limits on what the app may ask for. The transition is in tenths of a second, so ten
+// minutes; colour temperatures cover 1000–10000 K, wider than any bulb.
+const (
+	maxTransition     = 6000
+	minAcceptedMireds = 100
+	maxAcceptedMireds = 1000
+)
+
+func clamp(v, lo, hi int) int {
+	return max(lo, min(hi, v))
 }
 
 func clampMireds(m int) int {
