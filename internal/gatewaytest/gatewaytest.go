@@ -3,6 +3,7 @@ package gatewaytest
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 
@@ -40,6 +41,7 @@ func Start(tb testing.TB, rooms []config.Room, securityCode string) (string, *st
 		SecurityCode: securityCode,
 		Firmware:     "1.21.57",
 		GatewayID:    "020000004f47",
+		Resources:    map[string]json.RawMessage{"test/extra": json.RawMessage(`[]`)},
 	}, br, store)
 	ready := make(chan struct{})
 	go be.Run(ctx, br.Watch(), br.Update)

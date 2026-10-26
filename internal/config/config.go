@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -28,6 +29,9 @@ type Gateway struct {
 	MAC      string `toml:"mac"`
 	Firmware string `toml:"firmware"`
 	MDNS     bool   `toml:"mdns"`
+	// Extra resources served as fixed JSON, keyed by path without a leading slash,
+	// for trying out what the app expects at paths ÖVERGÅNG doesn't know.
+	Resources map[string]string `toml:"resources"`
 }
 
 type Backend struct {
@@ -101,6 +105,12 @@ func Load(path string) (*Config, error) {
 		}
 	default:
 		return nil, fmt.Errorf("unknown backend kind %q", cfg.Backend.Kind)
+	}
+
+	for path, value := range cfg.Gateway.Resources {
+		if !json.Valid([]byte(value)) {
+			return nil, fmt.Errorf("gateway.resources %q: not valid JSON", path)
+		}
 	}
 
 	seen := map[string]bool{}

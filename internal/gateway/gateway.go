@@ -39,6 +39,8 @@ type Config struct {
 	Firmware     string
 	// Hex gateway ID without separators, e.g. "020000004f47".
 	GatewayID string
+	// Extra resources served as fixed JSON, keyed by path. Writes replace them.
+	Resources map[string]json.RawMessage
 }
 
 type Server struct {
@@ -53,6 +55,8 @@ type Server struct {
 	// Gateway settings the app writes, such as the daylight saving rules. They are
 	// kept in memory and echoed back; nothing acts on them.
 	settings map[string]any
+	// Current values of Config.Resources.
+	resources map[string]json.RawMessage
 }
 
 type observer struct {
@@ -69,6 +73,10 @@ func New(cfg Config, br *bridge.Bridge, store *state.Store) *Server {
 		observers: map[string]map[*observer]bool{},
 		hooked:    map[mux.Conn]bool{},
 		settings:  map[string]any{},
+		resources: maps.Clone(cfg.Resources),
+	}
+	if s.resources == nil {
+		s.resources = map[string]json.RawMessage{}
 	}
 	br.OnChange(s.notify)
 	return s
@@ -203,6 +211,13 @@ func (s *Server) handle(w mux.ResponseWriter, r *mux.Message) {
 			s.pair(w, body, log)
 			return
 		}
+		if s.resource(path) != nil {
+			// Not knowing what a POST to an extra resource should create, accept it so
+			// the app goes on and its request shows up in the log.
+			log.Warn("POST to extra resource accepted without effect")
+			s.respond(w, codes.Created, nil)
+			return
+		}
 		log.Warn("UNHANDLED request")
 		s.respond(w, codes.MethodNotAllowed, nil)
 	case codes.PUT:
@@ -256,7 +271,16 @@ func (s *Server) pair(w mux.ResponseWriter, body []byte, log *slog.Logger) {
 }
 
 // render returns the resource at path.
+func (s *Server) resource(path string) json.RawMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.resources[path]
+}
+
 func (s *Server) render(path string) (codes.Code, any) {
+	if raw := s.resource(path); raw != nil {
+		return codes.Content, raw
+	}
 	seg := strings.Split(path, "/")
 	ints := make([]int, len(seg))
 	for i, p := range seg {
@@ -314,6 +338,16 @@ func (s *Server) gatewayInfo() map[string]any {
 }
 
 func (s *Server) put(ctx context.Context, path string, body []byte) codes.Code {
+	if s.resource(path) != nil {
+		if !json.Valid(body) {
+			return codes.BadRequest
+		}
+		s.mu.Lock()
+		s.resources[path] = json.RawMessage(bytes.Clone(body))
+		s.mu.Unlock()
+		go s.notify(path)
+		return codes.Changed
+	}
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
 	var req map[string]any

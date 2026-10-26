@@ -110,6 +110,7 @@ func serve(ctx context.Context, args []string) error {
 		SecurityCode: cfg.Gateway.SecurityCode,
 		Firmware:     cfg.Gateway.Firmware,
 		GatewayID:    gatewayID,
+		Resources:    resources(cfg.Gateway.Resources),
 	}, br, store)
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -144,6 +145,14 @@ func serve(ctx context.Context, args []string) error {
 	wg.Wait()
 	close(errc)
 	return errors.Join(collect(errc)...)
+}
+
+func resources(in map[string]string) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
+	for path, value := range in {
+		out[strings.Trim(path, "/")] = json.RawMessage(value)
+	}
+	return out
 }
 
 func collect(errc <-chan error) []error {

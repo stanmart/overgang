@@ -167,6 +167,17 @@ func TestDumpAndControl(tt *testing.T) {
 		tt.Errorf("gateway info after settings write: %v", info)
 	}
 
+	// Extra resources from the config are served, and writes replace them.
+	if b, err := c.Get(ctx, "test/extra"); err != nil || string(b) != "[]" {
+		tt.Errorf("extra resource: %s, %v", b, err)
+	}
+	if err := put("test/extra", `[1]`); err != nil {
+		tt.Fatal(err)
+	}
+	if b, _ := c.Get(ctx, "test/extra"); string(b) != "[1]" {
+		tt.Errorf("extra resource after write: %s", b)
+	}
+
 	// Renaming is read-only.
 	if err := put(devicePath(ids["light.desk"]), `{"9001":"Renamed"}`); err == nil {
 		tt.Error("rename was accepted")
