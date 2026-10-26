@@ -149,11 +149,20 @@ func identity(c mux.Conn) string {
 }
 
 func (s *Server) handle(w mux.ResponseWriter, r *mux.Message) {
+	// Acknowledgements and resets of our observe notifications reach the handler as
+	// empty messages. Answering them makes the library send a fresh confirmable message,
+	// which the app resets, which we would answer again, and so on.
+	if r.Code() == codes.Empty {
+		return
+	}
 	path, _ := r.Options().Path()
 	path = strings.Trim(path, "/")
 	body, _ := r.ReadBody()
 	id := identity(w.Conn())
 	log := slog.With("method", r.Code().String(), "path", path, "identity", id, "remote", w.Conn().RemoteAddr().String())
+	if obs, err := r.Options().Observe(); err == nil {
+		log = log.With("observe", obs)
+	}
 	if len(body) > 0 {
 		log = log.With("body", string(body))
 	}
