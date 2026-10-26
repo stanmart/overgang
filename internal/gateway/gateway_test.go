@@ -345,3 +345,18 @@ func TestPairingRejectsOddIdentities(tt *testing.T) {
 		tt.Errorf("app-style identity: %q, %v", psk, err)
 	}
 }
+
+// A paired identity must not pair further identities: only the security code may.
+func TestOnlyTheSecurityCodePairs(tt *testing.T) {
+	addr, _ := start(tt)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	psk, err := client.Pair(ctx, addr, code, "first-phone")
+	if err != nil {
+		tt.Fatal(err)
+	}
+	// Pairing over the paired identity's own session, with its key in place of the code.
+	if _, err := client.PairAs(ctx, addr, "first-phone", psk, "minted"); err == nil {
+		tt.Error("a paired identity minted another one")
+	}
+}

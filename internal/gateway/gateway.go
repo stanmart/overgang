@@ -241,6 +241,14 @@ func (s *Server) handle(w mux.ResponseWriter, r *mux.Message) {
 		}
 	case codes.POST:
 		if path == t.PathGateway+"/"+t.PathAuth {
+			// Only the security code pairs, as on the real gateway. Otherwise a phone
+			// that paired once could mint further identities without the code, which
+			// would outlive revoking its own.
+			if id != t.BootstrapIdentity {
+				log.Warn("refusing to pair from an already paired identity")
+				s.respond(w, codes.Unauthorized, nil)
+				return
+			}
 			s.pair(w, body, log)
 			return
 		}

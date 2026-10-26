@@ -41,7 +41,13 @@ func Dial(ctx context.Context, addr, identity, psk string) (*Client, error) {
 
 // Pair connects with the security code and asks the gateway for a key for identity.
 func Pair(ctx context.Context, addr, securityCode, identity string) (string, error) {
-	c, err := Dial(ctx, addr, t.BootstrapIdentity, securityCode)
+	return PairAs(ctx, addr, t.BootstrapIdentity, securityCode, identity)
+}
+
+// PairAs asks for a key for identity over a session authenticated as asIdentity with
+// key. Only the bootstrap identity may pair; this exists to test that.
+func PairAs(ctx context.Context, addr, asIdentity, key, identity string) (string, error) {
+	c, err := Dial(ctx, addr, asIdentity, key)
 	if err != nil {
 		return "", err
 	}
