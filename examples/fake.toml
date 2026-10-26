@@ -44,3 +44,9 @@ name = "Dining room"
   [[rooms.devices]]
   entity = "switch.christmas_tree_lights"
   name = "Christmas tree"
+
+# Scenes appear in the app next to the built-in "All off".
+[[scenes]]
+name = "Evening"
+entity = "scene.evening"
+fake_members = ["light.bedroom_ceiling_1", "light.desk_lamp", "switch.christmas_tree_lights"]

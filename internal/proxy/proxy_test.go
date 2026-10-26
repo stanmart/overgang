@@ -21,7 +21,7 @@ import (
 // must learn the new key to relay the app's next session.
 func TestProxyLearnsPairingAndRelays(tt *testing.T) {
 	const code = "real-gateway-code"
-	gw, _ := gatewaytest.Start(tt, []config.Room{{Name: "Room", Devices: []config.Device{{Entity: "light.one"}}}}, code)
+	gw, _ := gatewaytest.Start(tt, []config.Room{{Name: "Room", Devices: []config.Device{{Entity: "light.one"}}}}, nil, code)
 
 	store, err := state.Open(filepath.Join(tt.TempDir(), "proxy.json"))
 	if err != nil {

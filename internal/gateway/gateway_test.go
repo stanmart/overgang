@@ -28,10 +28,14 @@ var rooms = []config.Room{
 	}},
 }
 
+var scenes = []config.Scene{
+	{Name: "Evening", Entity: "scene.evening", FakeMembers: []string{"light.ceiling", "switch.tree"}},
+}
+
 // start runs the gateway on a free port with the fake backend.
 func start(tb testing.TB) (addr string, ids map[string]int) {
 	tb.Helper()
-	addr, store := gatewaytest.Start(tb, rooms, code)
+	addr, store := gatewaytest.Start(tb, rooms, scenes, code)
 	ids = map[string]int{}
 	for _, r := range rooms {
 		for _, d := range r.Devices {
@@ -204,12 +208,11 @@ func TestDumpAndControl(tt *testing.T) {
 		tt.Errorf("remote: %v", remote)
 	}
 
-	// Room off, then the RELAX mood back on.
-	// The bedroom's blind gets a group of its own.
+	// The bedroom's blind gets a group of its own, and the SuperGroup comes last.
 	var groups []int
 	json.Unmarshal(dump[t.PathGroups], &groups)
-	if len(groups) != 3 {
-		tt.Fatalf("got %d groups, want 3", len(groups))
+	if len(groups) != 4 {
+		tt.Fatalf("got %d groups, want 4", len(groups))
 	}
 	if g := getJSON(tt, c, fmt.Sprintf("%s/%d", t.PathGroups, groups[1])); g[t.AttrName] != "Bedroom blinds" {
 		tt.Errorf("second group: %v", g)
@@ -221,12 +224,35 @@ func TestDumpAndControl(tt *testing.T) {
 	if g := getJSON(tt, c, bedroom); g[t.AttrOnOff] != 0.0 {
 		tt.Errorf("bedroom still on: %v", g)
 	}
-	var moods []int
-	json.Unmarshal(dump[fmt.Sprintf("%s/%d", t.PathMoods, groups[0])], &moods)
-	if err := put(bedroom, fmt.Sprintf(`{"9039":%d}`, moods[2])); err != nil {
+	// Rooms have no moods; scenes are the SuperGroup's moods: "All off" first, then the
+	// configured ones.
+	if moods := string(dump[fmt.Sprintf("%s/%d", t.PathMoods, groups[0])]); moods != "[]" {
+		tt.Errorf("bedroom moods: %s", moods)
+	}
+	super := getJSON(tt, c, fmt.Sprintf("%s/%d", t.PathGroups, groups[3]))
+	if super[t.AttrGroupType] != 2.0 {
+		tt.Errorf("SuperGroup: %v", super)
+	}
+	var sceneIDs []int
+	json.Unmarshal(dump[fmt.Sprintf("%s/%d", t.PathMoods, groups[3])], &sceneIDs)
+	if len(sceneIDs) != 2 {
+		tt.Fatalf("scenes: %v", sceneIDs)
+	}
+	evening := getJSON(tt, c, fmt.Sprintf("%s/%d/%d", t.PathMoods, groups[3], sceneIDs[1]))
+	if evening[t.AttrName] != "Evening" || evening[t.AttrMoodPredefined] != 2.0 || len(evening[t.AttrMoodLights].([]any)) != 1 || len(evening[t.AttrMoodPlugs].([]any)) != 1 {
+		tt.Errorf("Evening scene: %v", evening)
+	}
+	superPath := fmt.Sprintf("%s/%d", t.PathGroups, groups[3])
+	if err := put(superPath, fmt.Sprintf(`{"9039":%d}`, sceneIDs[1])); err != nil {
 		tt.Fatal(err)
 	}
-	if l := light(getJSON(tt, c, devicePath(ids["light.ceiling"]))); l[t.AttrOnOff] != 1.0 || l[t.AttrColorTemp] != 454.0 {
-		tt.Errorf("ceiling after RELAX: %v", l)
+	if l := light(getJSON(tt, c, devicePath(ids["light.ceiling"]))); l[t.AttrOnOff] != 1.0 {
+		tt.Errorf("ceiling after Evening: %v", l)
+	}
+	if err := put(superPath, fmt.Sprintf(`{"9039":%d}`, sceneIDs[0])); err != nil {
+		tt.Fatal(err)
+	}
+	if l := light(getJSON(tt, c, devicePath(ids["light.ceiling"]))); l[t.AttrOnOff] != 0.0 {
+		tt.Errorf("ceiling after All off: %v", l)
 	}
 }

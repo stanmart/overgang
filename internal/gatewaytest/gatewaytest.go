@@ -14,9 +14,9 @@ import (
 	"github.com/stanmart/overgang/internal/state"
 )
 
-// Start serves rooms on a free loopback port until the test ends. It returns the address
-// and the state store, which also holds the assigned device IDs.
-func Start(tb testing.TB, rooms []config.Room, securityCode string) (string, *state.Store) {
+// Start serves rooms and scenes on a free loopback port until the test ends. It returns
+// the address and the state store, which also holds the assigned IDs.
+func Start(tb testing.TB, rooms []config.Room, scenes []config.Scene, securityCode string) (string, *state.Store) {
 	tb.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	tb.Cleanup(cancel)
@@ -31,8 +31,12 @@ func Start(tb testing.TB, rooms []config.Room, securityCode string) (string, *st
 			modes[d.Entity] = d.FakeColorModes
 		}
 	}
-	be := fake.New(modes)
-	br, err := bridge.New(rooms, be, store)
+	members := map[string][]string{}
+	for _, s := range scenes {
+		members[s.Entity] = s.FakeMembers
+	}
+	be := fake.New(modes, members)
+	br, err := bridge.New(rooms, scenes, be, store)
 	if err != nil {
 		tb.Fatal(err)
 	}

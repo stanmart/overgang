@@ -86,8 +86,11 @@ const (
 	AttrHSLink         = "15002"
 	AttrGroupMood      = "9039"
 	AttrGroupType      = "9108"
-	AttrMoodPredefined = "9068"
+	AttrMoodPredefined = "9068" // mood type: 2 for a user scene, 3 for "All off"
 	AttrMoodLights     = "15013"
+	AttrMoodPlugs      = "15021"
+	AttrSceneIndex     = "9057"
+	AttrSceneIcon      = "9109"
 )
 
 // Gateway attributes.

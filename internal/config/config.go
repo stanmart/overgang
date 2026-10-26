@@ -15,6 +15,7 @@ type Config struct {
 	Gateway Gateway `toml:"gateway"`
 	Backend Backend `toml:"backend"`
 	Rooms   []Room  `toml:"rooms"`
+	Scenes  []Scene `toml:"scenes"`
 }
 
 type Gateway struct {
@@ -67,6 +68,15 @@ type Device struct {
 	FakeColorModes []string `toml:"fake_color_modes"`
 }
 
+// Scene is a Home Assistant scene shown as a scene in the app, next to the built-in
+// "All off". Activating it calls scene.turn_on.
+type Scene struct {
+	Name   string `toml:"name"`
+	Entity string `toml:"entity"`
+	// Fake backend only: the entities the made-up scene contains.
+	FakeMembers []string `toml:"fake_members"`
+}
+
 // Load reads and checks a config file, applying defaults and environment overrides.
 func Load(path string) (*Config, error) {
 	cfg := Config{
@@ -110,6 +120,12 @@ func Load(path string) (*Config, error) {
 	for path, value := range cfg.Gateway.Resources {
 		if !json.Valid([]byte(value)) {
 			return nil, fmt.Errorf("gateway.resources %q: not valid JSON", path)
+		}
+	}
+
+	for _, s := range cfg.Scenes {
+		if s.Name == "" || s.Name == "All off" || !strings.HasPrefix(s.Entity, "scene.") {
+			return nil, fmt.Errorf("scene %q: needs a name other than \"All off\" and a scene.* entity", s.Name)
 		}
 	}
 

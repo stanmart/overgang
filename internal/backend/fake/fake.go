@@ -16,7 +16,8 @@ import (
 
 // Backend is the fake. The zero value is not usable; call New.
 type Backend struct {
-	colorModes map[string][]string
+	colorModes   map[string][]string
+	sceneMembers map[string][]string
 
 	mu       sync.Mutex
 	entities map[string]*entity
@@ -33,12 +34,14 @@ type entity struct {
 	modes    []string
 	position float64
 	battery  float64
+	members  []string // for scenes
 }
 
 // New makes a fake backend. colorModes sets supported_color_modes per light entity;
-// lights not listed are colour-temperature lights.
-func New(colorModes map[string][]string) *Backend {
-	return &Backend{colorModes: colorModes, entities: map[string]*entity{}}
+// lights not listed are colour-temperature lights. sceneMembers lists the entities each
+// scene turns on.
+func New(colorModes, sceneMembers map[string][]string) *Backend {
+	return &Backend{colorModes: colorModes, sceneMembers: sceneMembers, entities: map[string]*entity{}}
 }
 
 func (b *Backend) Run(ctx context.Context, watch []string, update func(backend.Entity)) error {
@@ -52,6 +55,7 @@ func (b *Backend) Run(ctx context.Context, watch []string, update func(backend.E
 			e.modes = []string{"color_temp"}
 		}
 		e.mode = e.modes[0]
+		e.members = b.sceneMembers[id]
 		b.entities[id] = e
 		initial = append(initial, e.render())
 	}
@@ -71,15 +75,31 @@ func (b *Backend) CallService(_ context.Context, domain, service, entityID strin
 		b.mu.Unlock()
 		return fmt.Errorf("fake: unknown entity %s", entityID)
 	}
-	if err := e.apply(domain+"."+service, data); err != nil {
+	changed := []*entity{e}
+	if domain == "scene" && service == "turn_on" {
+		// A scene turns its members on; the scene entity itself doesn't change.
+		changed = nil
+		for _, id := range e.members {
+			if m := b.entities[id]; m != nil {
+				m.on = true
+				changed = append(changed, m)
+			}
+		}
+	} else if err := e.apply(domain+"."+service, data); err != nil {
 		b.mu.Unlock()
 		return err
 	}
-	state, update := e.render(), b.update
+	var states []backend.Entity
+	for _, c := range changed {
+		states = append(states, c.render())
+	}
+	update := b.update
 	b.mu.Unlock()
 
 	slog.Info("fake service call", "service", domain+"."+service, "entity", entityID, "data", data)
-	update(state)
+	for _, s := range states {
+		update(s)
+	}
 	return nil
 }
 
@@ -139,6 +159,9 @@ func (e *entity) render() backend.Entity {
 			out.State = "closed"
 		}
 		attrs["current_position"] = e.position
+	case "scene":
+		out.State = "2026-01-01T00:00:00+00:00"
+		attrs["entity_id"] = e.members
 	case "sensor":
 		out.State = fmt.Sprint(e.battery)
 		attrs["unit_of_measurement"] = "%"

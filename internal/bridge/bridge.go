@@ -51,23 +51,26 @@ type Group struct {
 	Name    string
 	entity  string
 	members []*Device
-	moods   []*Mood
+	// The SuperGroup is a hidden group of every light. Its moods are what the app shows
+	// as scenes; ordinary rooms have no moods on current firmware.
+	super  bool
+	scenes []*Scene
 }
 
-// Mood is one of the app's predefined scenes. They are fixed: every room gets the same
-// three, and activating one sets every light in the room.
-type Mood struct {
+// Scene is a mood of the SuperGroup. Apart from the built-in "All off", each stands
+// for a Home Assistant scene entity.
+type Scene struct {
 	ID     int
 	Name   string
-	Dimmer int
-	Mireds int
+	entity string
+	allOff bool
 }
 
-var predefinedMoods = []Mood{
-	{Name: "FOCUS", Dimmer: t.MaxDimmer, Mireds: 250},
-	{Name: "EVERYDAY", Dimmer: t.MaxDimmer, Mireds: 370},
-	{Name: "RELAX", Dimmer: 100, Mireds: 454},
-}
+// Mood types (AttrMoodPredefined) seen on the real gateway.
+const (
+	moodUserScene = 2
+	moodAllOff    = 3
+)
 
 type Bridge struct {
 	backend backend.Backend
@@ -86,12 +89,16 @@ type Bridge struct {
 	lastSeen   map[string]int64
 	dimmer     map[string]int // last brightness while on, reported while off
 	mireds     map[string]int // likewise for colour temperature
+	superGroup *Group
+	scenes     []string // scene entities to watch
+
 	activeMood map[int]int
 	notify     func(paths ...string)
 }
 
-// New lays out devices and groups from the config, taking stable IDs from the store.
-func New(rooms []config.Room, b backend.Backend, ids *state.Store) (*Bridge, error) {
+// New lays out devices, groups and scenes from the config, taking stable IDs from the
+// store.
+func New(rooms []config.Room, scenes []config.Scene, b backend.Backend, ids *state.Store) (*Bridge, error) {
 	br := &Bridge{
 		backend:       b,
 		created:       time.Now().Unix(),
@@ -112,15 +119,6 @@ func New(rooms []config.Room, b backend.Backend, ids *state.Store) (*Bridge, err
 			return nil, err
 		}
 		g := &Group{ID: gid, Name: r.Name, entity: r.Entity}
-		for _, m := range predefinedMoods {
-			mid, err := ids.ID("mood", r.Name+"/"+m.Name, t.MoodIDBase)
-			if err != nil {
-				return nil, err
-			}
-			m.ID = mid
-			g.moods = append(g.moods, &m)
-		}
-		br.activeMood[g.ID] = g.moods[1].ID
 		for _, dc := range r.Devices {
 			kind, err := kindOf(dc)
 			if err != nil {
@@ -142,7 +140,39 @@ func New(rooms []config.Room, b backend.Backend, ids *state.Store) (*Bridge, err
 		br.groups = append(br.groups, g)
 		br.groupByID[gid] = g
 	}
+	if err := br.addSuperGroup(scenes, ids); err != nil {
+		return nil, err
+	}
 	return br, nil
+}
+
+func (b *Bridge) addSuperGroup(scenes []config.Scene, ids *state.Store) error {
+	gid, err := ids.ID("group", "SuperGroup", t.GroupIDBase)
+	if err != nil {
+		return err
+	}
+	g := &Group{ID: gid, Name: "SuperGroup", super: true}
+	for _, d := range b.devices {
+		if d.Kind == KindLight {
+			g.members = append(g.members, d)
+		}
+	}
+	all := append([]config.Scene{{Name: "All off"}}, scenes...)
+	for _, sc := range all {
+		mid, err := ids.ID("mood", sc.Name, t.MoodIDBase)
+		if err != nil {
+			return err
+		}
+		g.scenes = append(g.scenes, &Scene{ID: mid, Name: sc.Name, entity: sc.Entity, allOff: sc.Entity == ""})
+		if sc.Entity != "" {
+			b.scenes = append(b.scenes, sc.Entity)
+		}
+	}
+	b.activeMood[g.ID] = g.scenes[0].ID
+	b.superGroup = g
+	b.groups = append(b.groups, g)
+	b.groupByID[gid] = g
+	return nil
 }
 
 // splitBlinds moves the blinds of a room that also has lights or plugs into a group of
@@ -209,7 +239,7 @@ func (b *Bridge) Watch() []string {
 			out = append(out, g.entity)
 		}
 	}
-	return out
+	return append(out, b.scenes...)
 }
 
 // Update takes a new entity state from the backend.
@@ -231,6 +261,9 @@ func (b *Bridge) Update(e backend.Entity) {
 	}
 	if g := b.groupByEntity[e.ID]; g != nil {
 		paths = append(paths, groupPath(g.ID))
+	}
+	if d := b.deviceByEnt[e.ID]; d != nil && d.Kind == KindLight {
+		paths = append(paths, groupPath(b.superGroup.ID))
 	}
 	notify := b.notify
 	b.mu.Unlock()
@@ -266,9 +299,9 @@ func (b *Bridge) MoodIDs(groupID int) ([]int, bool) {
 	if g == nil {
 		return nil, false
 	}
-	var out []int
-	for _, m := range g.moods {
-		out = append(out, m.ID)
+	out := []int{}
+	for _, sc := range g.scenes {
+		out = append(out, sc.ID)
 	}
 	return out, true
 }
@@ -386,6 +419,11 @@ func (b *Bridge) Group(id int) (map[string]any, bool) {
 	for _, d := range g.members {
 		members = append(members, d.ID)
 	}
+	groupType := 0
+	if g.super {
+		groupType = 2
+		dimmer = 0
+	}
 	return map[string]any{
 		t.AttrName:      g.Name,
 		t.AttrCreatedAt: b.created,
@@ -393,51 +431,68 @@ func (b *Bridge) Group(id int) (map[string]any, bool) {
 		t.AttrOnOff:     boolInt(on),
 		t.AttrDimmer:    dimmer,
 		t.AttrGroupMood: b.activeMood[g.ID],
-		t.AttrGroupType: 0,
+		t.AttrGroupType: groupType,
 		t.AttrGroupMembers: map[string]any{
 			t.AttrHSLink: map[string]any{t.AttrID: members},
 		},
 	}, true
 }
 
-// Mood renders GET /15005/<group>/<mood>.
+// Mood renders GET /15005/<group>/<mood>: a scene, as only the SuperGroup has moods.
+// "All off" lists every light and plug as off. A Home Assistant scene lists the lights
+// it contains as on; their exact settings stay in Home Assistant.
 func (b *Bridge) Mood(groupID, moodID int) (map[string]any, bool) {
 	g := b.groupByID[groupID]
 	if g == nil {
 		return nil, false
 	}
-	m := g.mood(moodID)
-	if m == nil {
+	sc, index := g.scene(moodID)
+	if sc == nil {
 		return nil, false
 	}
-	var lights []any
-	for _, d := range g.members {
-		if d.Kind == KindLight {
-			lights = append(lights, map[string]any{
-				t.AttrID:        d.ID,
-				t.AttrOnOff:     1,
-				t.AttrDimmer:    m.Dimmer,
-				t.AttrColorTemp: m.Mireds,
-				t.AttrColorHex:  t.NearestPreset(m.Mireds),
-			})
+	b.mu.Lock()
+	inScene := map[string]bool{}
+	for _, id := range b.entities[sc.entity].Strings("entity_id") {
+		inScene[id] = true
+	}
+	b.mu.Unlock()
+
+	lights, plugs := []any{}, []any{}
+	for _, d := range b.devices {
+		switch {
+		case sc.allOff && d.Kind == KindLight:
+			lights = append(lights, map[string]any{t.AttrOnOff: 0, t.AttrID: d.ID})
+		case sc.allOff && d.Kind == KindPlug:
+			plugs = append(plugs, map[string]any{t.AttrOnOff: 0, t.AttrID: d.ID})
+		case inScene[d.Entity] && d.Kind == KindLight:
+			lights = append(lights, map[string]any{t.AttrOnOff: 1, t.AttrID: d.ID})
+		case inScene[d.Entity] && d.Kind == KindPlug:
+			plugs = append(plugs, map[string]any{t.AttrOnOff: 1, t.AttrID: d.ID})
 		}
 	}
+	kind, icon := moodUserScene, 2
+	if sc.allOff {
+		kind, icon = moodAllOff, 0
+	}
 	return map[string]any{
-		t.AttrName:           m.Name,
+		t.AttrName:           sc.Name,
+		t.AttrSceneIcon:      icon,
 		t.AttrCreatedAt:      b.created,
-		t.AttrID:             m.ID,
-		t.AttrMoodPredefined: 1,
+		t.AttrID:             sc.ID,
+		t.AttrSceneIndex:     index,
+		t.AttrMoodPredefined: kind,
 		t.AttrMoodLights:     lights,
+		t.AttrMoodPlugs:      plugs,
 	}, true
 }
 
-func (g *Group) mood(id int) *Mood {
-	for _, m := range g.moods {
-		if m.ID == id {
-			return m
+func (g *Group) scene(id int) (*Scene, int) {
+	for i, sc := range g.scenes {
+		if sc.ID == id {
+			return sc, i
 		}
 	}
-	return nil
+	return nil, 0
 }
 
 // SetDevice handles PUT /15001/<id>.
@@ -491,14 +546,14 @@ func (b *Bridge) SetGroup(ctx context.Context, id int, body map[string]any) erro
 		return ErrNotFound
 	}
 	if moodID, ok := intVal(body, t.AttrGroupMood); ok {
-		m := g.mood(moodID)
-		if m == nil {
+		sc, _ := g.scene(moodID)
+		if sc == nil {
 			return ErrNotFound
 		}
 		b.mu.Lock()
-		b.activeMood[g.ID] = m.ID
+		b.activeMood[g.ID] = sc.ID
 		b.mu.Unlock()
-		return b.applyMood(ctx, g, m)
+		return b.applyScene(ctx, sc)
 	}
 	service, data, err := lightCommand(body)
 	if err != nil {
@@ -525,20 +580,18 @@ func (b *Bridge) SetGroup(ctx context.Context, id int, body map[string]any) erro
 	return errors.Join(errs...)
 }
 
-func (b *Bridge) applyMood(ctx context.Context, g *Group, m *Mood) error {
+func (b *Bridge) applyScene(ctx context.Context, sc *Scene) error {
+	if !sc.allOff {
+		return b.call(ctx, "scene", "turn_on", sc.entity, nil)
+	}
 	var errs []error
-	for _, d := range g.members {
-		if d.Kind != KindLight {
-			continue
+	for _, d := range b.devices {
+		switch d.Kind {
+		case KindLight:
+			errs = append(errs, b.call(ctx, "light", "turn_off", d.Entity, nil))
+		case KindPlug:
+			errs = append(errs, b.call(ctx, backend.Domain(d.Entity), "turn_off", d.Entity, nil))
 		}
-		data := map[string]any{"brightness": fromDimmer(m.Dimmer)}
-		b.mu.Lock()
-		c := capabilitiesOf(b.entities[d.Entity])
-		b.mu.Unlock()
-		if c.colorTemp {
-			data["color_temp_kelvin"] = int(math.Round(1e6 / float64(m.Mireds)))
-		}
-		errs = append(errs, b.call(ctx, "light", "turn_on", d.Entity, data))
 	}
 	return errors.Join(errs...)
 }

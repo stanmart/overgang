@@ -95,12 +95,16 @@ func serve(ctx context.Context, args []string) error {
 				modes[d.Entity] = d.FakeColorModes
 			}
 		}
-		be = fake.New(modes)
+		members := map[string][]string{}
+		for _, s := range cfg.Scenes {
+			members[s.Entity] = s.FakeMembers
+		}
+		be = fake.New(modes, members)
 	case "homeassistant":
 		be = homeassistant.New(cfg.Backend.URL, cfg.Backend.Token)
 	}
 
-	br, err := bridge.New(cfg.Rooms, be, store)
+	br, err := bridge.New(cfg.Rooms, cfg.Scenes, be, store)
 	if err != nil {
 		return err
 	}
