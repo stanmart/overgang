@@ -330,6 +330,8 @@ func (b *Bridge) Device(id int) (map[string]any, bool) {
 		t.InfoSerial:       "",
 		t.InfoFirmware:     "2.3.095",
 		t.InfoPowerSource:  t.PowerInternal,
+		t.InfoImageType:    0,
+		t.InfoProfile:      0,
 	}
 	out := map[string]any{
 		t.AttrName:           name,
@@ -344,9 +346,17 @@ func (b *Bridge) Device(id int) (map[string]any, bool) {
 	case KindLight:
 		out[t.AttrDeviceType] = t.TypeLight
 		out[t.AttrLightControl] = []any{b.lightState(d.Entity, e, c)}
+		// Values the real gateway reports for its WS and CWS bulbs.
+		switch {
+		case c.color:
+			info[t.InfoImageType], info[t.InfoProfile] = 10243, 3
+		case c.colorTemp:
+			info[t.InfoImageType], info[t.InfoProfile] = 16900, 5
+		}
 	case KindPlug:
 		out[t.AttrDeviceType] = t.TypePlug
-		out[t.AttrPlugControl] = []any{map[string]any{t.AttrOnOff: boolInt(e.State == "on"), t.AttrDimmer: 0, t.AttrID: 0}}
+		out[t.AttrPlugControl] = []any{map[string]any{t.AttrOnOff: boolInt(e.State == "on"), t.AttrUnknown5849: 0, t.AttrDimmer: t.MaxDimmer, t.AttrID: 0}}
+		info[t.InfoImageType] = 4353
 	case KindBlind:
 		out[t.AttrDeviceType] = t.TypeBlind
 		pos, _ := e.Float("current_position")
@@ -370,8 +380,9 @@ func (b *Bridge) lightState(entityID string, e backend.Entity, c capabilities) m
 	if !ok {
 		dimmer = t.MaxDimmer
 	}
-	out := map[string]any{t.AttrOnOff: boolInt(on), t.AttrDimmer: dimmer, t.AttrID: 0}
+	out := map[string]any{t.AttrOnOff: boolInt(on), t.AttrUnknown5849: 2, t.AttrDimmer: dimmer, t.AttrID: 0}
 	if c.colorTemp {
+		out[t.AttrUnknown5717] = 0
 		mireds, ok := b.mireds[entityID]
 		if !ok {
 			mireds = 370

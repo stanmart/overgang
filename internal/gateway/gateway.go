@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,6 +58,24 @@ type Server struct {
 	settings map[string]any
 	// Current values of Config.Resources.
 	resources map[string]json.RawMessage
+	started   int64
+}
+
+// observedSettings are gateway info keys a real gateway on firmware 1.21.57 reports
+// whose meaning is unknown or irrelevant here. They start out with that gateway's
+// values (Alexa and Google pairing off) and the app may overwrite them.
+var observedSettings = map[string]any{
+	"9062": 0, "9082": false, "9092": 0, "9093": 0, "9105": 0, "9106": 0, "9107": 0,
+	"9118": 0, "9146": 0, "9201": 1, "9204": 1, "9211": 0, "9234": 1, "9266": 0,
+	// Daylight saving rules and 9236; the app writes these on every start.
+	"9072": 3, "9073": 28, "9074": 1, "9075": 0, "9076": 10, "9077": 31, "9078": 1,
+	"9079": 0, "9080": 60, "9236": 3600,
+}
+
+// uuid derives a stable gateway UUID (9200) from the gateway ID.
+func (s *Server) uuid() string {
+	h := sha1.Sum([]byte("overgang/" + s.cfg.GatewayID))
+	return fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
 
 type observer struct {
@@ -72,7 +91,8 @@ func New(cfg Config, br *bridge.Bridge, store *state.Store) *Server {
 		store:     store,
 		observers: map[string]map[*observer]bool{},
 		hooked:    map[mux.Conn]bool{},
-		settings:  map[string]any{},
+		settings:  maps.Clone(observedSettings),
+		started:   time.Now().Unix(),
 		resources: maps.Clone(cfg.Resources),
 	}
 	if s.resources == nil {
@@ -190,8 +210,13 @@ func (s *Server) handle(w mux.ResponseWriter, r *mux.Message) {
 	case codes.GET:
 		code, payload := s.render(path)
 		if code != codes.Content {
-			log.Warn("UNHANDLED request", "code", code.String())
-			s.respond(w, code, nil)
+			if payload != nil {
+				// An error the real gateway gives too.
+				log.Debug("request", "code", code.String())
+			} else {
+				log.Warn("UNHANDLED request", "code", code.String())
+			}
+			s.respond(w, code, payload)
 			return
 		}
 		log.Debug("request")
@@ -307,6 +332,10 @@ func (s *Server) render(path string) (codes.Code, any) {
 		return found(s.bridge.MoodIDs(ints[1]))
 	case len(seg) == 3 && seg[0] == t.PathMoods:
 		return found(s.bridge.Mood(ints[1], ints[2]))
+	case path == t.PathGateway+"/"+t.PathUnknown9124:
+		// The app watches this on every start; a real gateway on firmware 1.21.57
+		// answers with this error.
+		return codes.InternalServerError, map[string]string{"r": "01"}
 	case path == t.PathSmartTasks, path == t.PathNotifications:
 		return codes.Content, []any{}
 	case path == t.PathGateway+"/"+t.PathGatewayInfo:
@@ -322,17 +351,19 @@ func (s *Server) gatewayInfo() map[string]any {
 	maps.Copy(info, s.settings)
 	s.mu.Unlock()
 	maps.Copy(info, map[string]any{
-		t.AttrNTPServer:         "pool.ntp.org",
+		t.AttrNTPServer:         "1.tradfri.pool.ntp.org",
 		t.AttrFirmware:          s.cfg.Firmware,
 		t.AttrCurrentTimeUnix:   now.Unix(),
 		t.AttrCurrentTimeISO:    now.UTC().Format("2006-01-02T15:04:05.000000Z"),
 		t.AttrCommissioningMode: 0,
 		t.AttrOTAUpdateState:    0,
-		t.AttrUpdateProgress:    100,
-		t.AttrOTAType:           1,
-		t.AttrFirstSetup:        now.Unix(),
+		t.AttrUpdateProgress:    0,
+		t.AttrOTAType:           5,
+		t.AttrFirstSetup:        s.started,
 		t.AttrTimeSource:        1,
 		t.AttrGatewayID:         s.cfg.GatewayID,
+		t.AttrHomekitID:         "N/A",
+		t.AttrGatewayUUID:       s.uuid(),
 	})
 	return info
 }

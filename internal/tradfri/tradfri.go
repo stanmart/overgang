@@ -15,6 +15,7 @@ const (
 	// Below PathGateway.
 	PathGatewayInfo = "15012"
 	PathAuth        = "9063"
+	PathUnknown9124 = "9124" // watched by the app, meaning unknown
 )
 
 // The identity every app uses for its first connection, keyed with the security code
@@ -40,6 +41,8 @@ const (
 	InfoSerial       = "2"
 	InfoFirmware     = "3"
 	InfoPowerSource  = "6"
+	InfoImageType    = "7" // OTA image type, e.g. 16900 for WS bulbs
+	InfoProfile      = "8" // 5 for WS bulbs, 3 for CWS, 0 otherwise
 	InfoBattery      = "9"
 )
 
@@ -76,6 +79,8 @@ const (
 	AttrColorY        = "5710"
 	AttrColorTemp     = "5711" // mireds
 	AttrTransition    = "5712" // tenths of a second
+	AttrUnknown5849   = "5849" // meaning unknown; 2 on bulbs, 0 on plugs on the real gateway
+	AttrUnknown5717   = "5717" // meaning unknown; 0 on white-spectrum bulbs
 	AttrBlindPosition = "5536" // 0 is open, 100 closed
 	AttrBlindTrigger  = "5523" // any write stops the blind
 )
@@ -108,6 +113,7 @@ const (
 	AttrTimeSource        = "9071"
 	AttrGatewayID         = "9081"
 	AttrHomekitID         = "9083"
+	AttrGatewayUUID       = "9200"
 )
 
 // Value ranges.
