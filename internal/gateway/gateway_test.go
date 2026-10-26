@@ -186,8 +186,15 @@ func TestDumpAndControl(tt *testing.T) {
 	}
 
 	// Room off, then the RELAX mood back on.
+	// The bedroom's blind gets a group of its own.
 	var groups []int
 	json.Unmarshal(dump[t.PathGroups], &groups)
+	if len(groups) != 3 {
+		tt.Fatalf("got %d groups, want 3", len(groups))
+	}
+	if g := getJSON(tt, c, fmt.Sprintf("%s/%d", t.PathGroups, groups[1])); g[t.AttrName] != "Bedroom blinds" {
+		tt.Errorf("second group: %v", g)
+	}
 	bedroom := fmt.Sprintf("%s/%d", t.PathGroups, groups[0])
 	if err := put(bedroom, `{"5850":0}`); err != nil {
 		tt.Fatal(err)

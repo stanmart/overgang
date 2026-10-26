@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -105,7 +106,7 @@ func New(rooms []config.Room, b backend.Backend, ids *state.Store) (*Bridge, err
 		activeMood:    map[int]int{},
 		notify:        func(...string) {},
 	}
-	for _, r := range rooms {
+	for _, r := range splitBlinds(rooms) {
 		gid, err := ids.ID("group", r.Name, t.GroupIDBase)
 		if err != nil {
 			return nil, err
@@ -142,6 +143,34 @@ func New(rooms []config.Room, b backend.Backend, ids *state.Store) (*Bridge, err
 		br.groupByID[gid] = g
 	}
 	return br, nil
+}
+
+// splitBlinds moves the blinds of a room that also has lights or plugs into a group of
+// their own. The app only offers room controls for a group of lights or a group of
+// blinds, and asks the user to separate them otherwise.
+func splitBlinds(rooms []config.Room) []config.Room {
+	var out []config.Room
+	for _, r := range rooms {
+		var blinds, rest []config.Device
+		for _, d := range r.Devices {
+			if kind, err := kindOf(d); err == nil && kind == KindBlind {
+				blinds = append(blinds, d)
+			} else {
+				rest = append(rest, d)
+			}
+		}
+		if len(blinds) == 0 || !slices.ContainsFunc(rest, func(d config.Device) bool {
+			kind, err := kindOf(d)
+			return err == nil && (kind == KindLight || kind == KindPlug)
+		}) {
+			out = append(out, r)
+			continue
+		}
+		lights := r
+		lights.Devices = rest
+		out = append(out, lights, config.Room{Name: r.Name + " blinds", Devices: blinds})
+	}
+	return out
 }
 
 func kindOf(d config.Device) (Kind, error) {
