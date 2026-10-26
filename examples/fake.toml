@@ -1,0 +1,46 @@
+# Try ÖVERGÅNG without Home Assistant: the fake backend makes up a device for every
+# entity listed here and logs the service calls the app's actions turn into.
+#
+#   overgang serve -config examples/fake.toml -v
+
+[gateway]
+listen = ":5684"
+security_code = "overgang-test-code"
+state_file = "overgang-state.json"
+mac = "02:00:00:00:4f:47"
+mdns = true
+
+[backend]
+kind = "fake"
+
+[[rooms]]
+name = "Bedroom"
+
+  [[rooms.devices]]
+  entity = "light.bedroom_ceiling_1"
+
+  [[rooms.devices]]
+  entity = "light.bedroom_ceiling_2"
+
+  [[rooms.devices]]
+  entity = "light.desk_lamp"
+  name = "Desk lamp"
+
+  [[rooms.devices]]
+  entity = "cover.bedroom_blind"
+
+  [[rooms.devices]]
+  entity = "sensor.bedroom_remote_battery"
+  kind = "remote"
+  name = "Bedroom remote"
+
+[[rooms]]
+name = "Dining room"
+
+  [[rooms.devices]]
+  entity = "light.dining_bulb_1"
+  fake_color_modes = ["xy"]
+
+  [[rooms.devices]]
+  entity = "switch.christmas_tree_lights"
+  name = "Christmas tree"

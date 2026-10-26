@@ -1,0 +1,31 @@
+# The real thing: devices come from Home Assistant over its websocket API.
+#
+# Secrets stay out of this file. Put the code the app pairs with and a long-lived Home
+# Assistant token in the environment (OVERGANG_SECURITY_CODE, OVERGANG_HA_TOKEN) or in
+# the files named below.
+
+[gateway]
+listen = ":5684"
+security_code_file = "/var/lib/overgang/security-code"
+state_file = "/var/lib/overgang/state.json"
+# Any locally administered MAC works; it only names the gateway.
+mac = "02:00:00:00:4f:47"
+firmware = "1.21.31"
+mdns = true
+
+[backend]
+kind = "homeassistant"
+url = "ws://127.0.0.1:8123/api/websocket"
+token_file = "/var/lib/overgang/ha-token"
+
+[[rooms]]
+name = "Bedroom"
+# A Zigbee2MQTT group exposed as a light switches the room with one Zigbee command.
+entity = "light.bedroom_ceiling_lights"
+
+  [[rooms.devices]]
+  entity = "light.bedroom_ceiling_light_1"
+
+  [[rooms.devices]]
+  entity = "light.midesklamppro_ba66_mijia_desk_lamp_sw"
+  name = "Desk lamp"
