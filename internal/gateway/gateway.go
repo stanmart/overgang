@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -49,6 +50,9 @@ type Server struct {
 	observers map[string]map[*observer]bool // path → observers
 	hooked    map[mux.Conn]bool             // conns with an on-close cleanup registered
 	addr      string
+	// Gateway settings the app writes, such as the daylight saving rules. They are
+	// kept in memory and echoed back; nothing acts on them.
+	settings map[string]any
 }
 
 type observer struct {
@@ -64,6 +68,7 @@ func New(cfg Config, br *bridge.Bridge, store *state.Store) *Server {
 		store:     store,
 		observers: map[string]map[*observer]bool{},
 		hooked:    map[mux.Conn]bool{},
+		settings:  map[string]any{},
 	}
 	br.OnChange(s.notify)
 	return s
@@ -288,7 +293,11 @@ func (s *Server) render(path string) (codes.Code, any) {
 
 func (s *Server) gatewayInfo() map[string]any {
 	now := time.Now()
-	return map[string]any{
+	info := map[string]any{}
+	s.mu.Lock()
+	maps.Copy(info, s.settings)
+	s.mu.Unlock()
+	maps.Copy(info, map[string]any{
 		t.AttrNTPServer:         "pool.ntp.org",
 		t.AttrFirmware:          s.cfg.Firmware,
 		t.AttrCurrentTimeUnix:   now.Unix(),
@@ -300,7 +309,8 @@ func (s *Server) gatewayInfo() map[string]any {
 		t.AttrFirstSetup:        now.Unix(),
 		t.AttrTimeSource:        1,
 		t.AttrGatewayID:         s.cfg.GatewayID,
-	}
+	})
+	return info
 }
 
 func (s *Server) put(ctx context.Context, path string, body []byte) codes.Code {
@@ -309,6 +319,12 @@ func (s *Server) put(ctx context.Context, path string, body []byte) codes.Code {
 	var req map[string]any
 	if err := dec.Decode(&req); err != nil {
 		return codes.BadRequest
+	}
+	if path == t.PathGateway+"/"+t.PathGatewayInfo {
+		s.mu.Lock()
+		maps.Copy(s.settings, req)
+		s.mu.Unlock()
+		return codes.Changed
 	}
 	seg := strings.Split(path, "/")
 	if len(seg) != 2 {

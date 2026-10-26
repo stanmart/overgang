@@ -159,6 +159,14 @@ func TestDumpAndControl(tt *testing.T) {
 		tt.Errorf("colour light has no xy after a hex colour: %v", l)
 	}
 
+	// The app writes gateway settings such as daylight saving rules; they are echoed back.
+	if err := put(t.PathGateway+"/"+t.PathGatewayInfo, `{"9236":3600,"9072":3}`); err != nil {
+		tt.Fatal(err)
+	}
+	if info := getJSON(tt, c, t.PathGateway+"/"+t.PathGatewayInfo); info["9236"] != 3600.0 || info[t.AttrFirmware] != "1.21.57" {
+		tt.Errorf("gateway info after settings write: %v", info)
+	}
+
 	// Renaming is read-only.
 	if err := put(devicePath(ids["light.desk"]), `{"9001":"Renamed"}`); err == nil {
 		tt.Error("rename was accepted")
