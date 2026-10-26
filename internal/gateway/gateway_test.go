@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -328,4 +329,19 @@ func silentObserver(tb testing.TB, addr, path string) net.Conn {
 		tb.Fatal(err)
 	}
 	return conn
+}
+
+func TestPairingRejectsOddIdentities(tt *testing.T) {
+	addr, _ := start(tt)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, id := range []string{strings.Repeat("x", 65), "with space", t.BootstrapIdentity} {
+		if _, err := client.Pair(ctx, addr, code, id); err == nil {
+			tt.Errorf("paired as %q", id)
+		}
+	}
+	psk, err := client.Pair(ctx, addr, code, "f2c3b6ffed274cfcbc87d59834f533ac")
+	if err != nil || len(psk) != 16 {
+		tt.Errorf("app-style identity: %q, %v", psk, err)
+	}
 }

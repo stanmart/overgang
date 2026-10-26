@@ -55,6 +55,13 @@ func (s *Store) PSK(identity string) (string, bool) {
 	return psk, ok
 }
 
+// Identities returns how many identities are paired.
+func (s *Store) Identities() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.data.Identities)
+}
+
 // SetPSK records a newly paired identity.
 func (s *Store) SetPSK(identity, psk string) error {
 	s.mu.Lock()

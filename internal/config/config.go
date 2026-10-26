@@ -103,6 +103,12 @@ func Load(path string) (*Config, error) {
 	if cfg.Gateway.SecurityCode == "" {
 		return nil, errors.New("no security code: set gateway.security_code(_file) or OVERGANG_SECURITY_CODE")
 	}
+	// Anyone who has the code can pair and control the configured devices, and a
+	// recorded pairing handshake lets an attacker test guesses offline. The real
+	// gateway's codes are 16 random characters.
+	if len(cfg.Gateway.SecurityCode) < 12 {
+		return nil, errors.New("the security code must be at least 12 characters; use 16 random letters and digits like a real gateway")
+	}
 	if cfg.Backend.Token, err = secret("OVERGANG_HA_TOKEN", cfg.Backend.Token, cfg.Backend.TokenFile); err != nil {
 		return nil, err
 	}

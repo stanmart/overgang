@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -145,14 +146,20 @@ func (s *Server) Run(ctx context.Context, ready chan<- struct{}) error {
 	srv := dtls.NewServer(
 		options.WithMux(mux.HandlerFunc(s.handle)),
 		// The app keeps its session open to receive observe notifications. The library
-		// default drops a connection after 16 s without traffic.
-		options.WithInactivityMonitor(time.Hour, func(cc *udpClient.Conn) { _ = cc.Close() }),
+		// default drops a connection after 16 s without traffic; the app reconnects on
+		// its own when it finds one gone.
+		options.WithInactivityMonitor(15*time.Minute, func(cc *udpClient.Conn) { _ = cc.Close() }),
+		// A PSK handshake on the LAN takes milliseconds. The default 30 s lets a peer
+		// that never finishes hold a connection slot that long.
+		options.WithDTLSHandshakeTimeout(5*time.Second),
+		// Nothing the app sends comes close; this bounds block-wise reassembly.
+		options.WithMaxMessageSize(16*1024),
 	)
 	if ready != nil {
 		close(ready)
 	}
 	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(l) }()
+	go func() { errc <- srv.Serve(newLimitedListener(l, maxConns)) }()
 	select {
 	case <-ctx.Done():
 		srv.Stop()
@@ -165,7 +172,11 @@ func (s *Server) Run(ctx context.Context, ready chan<- struct{}) error {
 
 // identity returns the PSK identity the peer authenticated with.
 func identity(c mux.Conn) string {
-	if dc, ok := c.NetConn().(*piondtls.Conn); ok {
+	nc := c.NetConn()
+	if u, ok := nc.(interface{ Unwrap() net.Conn }); ok {
+		nc = u.Unwrap()
+	}
+	if dc, ok := nc.(*piondtls.Conn); ok {
 		if st, ok := dc.ConnectionState(); ok {
 			return string(st.IdentityHint)
 		}
@@ -278,8 +289,13 @@ func (s *Server) pair(w mux.ResponseWriter, body []byte, log *slog.Logger) {
 		return
 	}
 	name, _ := req[t.AttrIdentity].(string)
-	if name == "" || name == t.BootstrapIdentity {
+	if !validIdentity(name) {
 		s.respond(w, codes.BadRequest, nil)
+		return
+	}
+	if _, known := s.store.PSK(name); !known && s.store.Identities() >= maxIdentities {
+		log.Warn("refusing to pair: too many identities")
+		s.respond(w, codes.Forbidden, nil)
 		return
 	}
 	psk := randomKey()
@@ -383,8 +399,13 @@ func (s *Server) put(ctx context.Context, path string, body []byte) codes.Code {
 		return codes.BadRequest
 	}
 	if path == t.PathGateway+"/"+t.PathGatewayInfo {
+		// Only settings a real gateway has; the rest of the gateway info is ours.
 		s.mu.Lock()
-		maps.Copy(s.settings, req)
+		for k, v := range req {
+			if _, known := observedSettings[k]; known {
+				s.settings[k] = v
+			}
+		}
 		s.mu.Unlock()
 		return codes.Changed
 	}
@@ -418,12 +439,36 @@ func (s *Server) put(ctx context.Context, path string, body []byte) codes.Code {
 	return codes.ServiceUnavailable
 }
 
+// maxIdentities caps paired identities. Each phone pairs once per install, so this
+// leaves room for reinstalls while bounding the state file.
+const maxIdentities = 64
+
+// validIdentity accepts the names apps pair with: the TRÅDFRI app uses 32 hex
+// characters, and pytradfri and friends similar short ASCII names.
+func validIdentity(name string) bool {
+	if name == "" || name == t.BootstrapIdentity || len(name) > 64 {
+		return false
+	}
+	for _, r := range name {
+		if r < 0x21 || r > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// randomKey returns a 16-character pre-shared key, the length the real gateway hands
+// out, drawn uniformly from 62 characters (about 95 bits).
 func randomKey() string {
 	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	for i := range b {
-		b[i] = alphabet[int(b[i])%len(alphabet)]
+	key := make([]byte, 0, 16)
+	b := make([]byte, 1)
+	for len(key) < cap(key) {
+		_, _ = rand.Read(b)
+		// Rejection sampling: 248 is the largest multiple of 62 below 256.
+		if int(b[0]) < 248 {
+			key = append(key, alphabet[int(b[0])%len(alphabet)])
+		}
 	}
-	return string(b)
+	return string(key)
 }
