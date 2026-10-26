@@ -107,7 +107,6 @@ func DTLSConfig(psk func(identity string) ([]byte, error)) *piondtls.Config {
 			piondtls.TLS_PSK_WITH_AES_128_CCM_8,
 			piondtls.TLS_PSK_WITH_AES_128_CCM,
 			piondtls.TLS_PSK_WITH_AES_128_GCM_SHA256,
-			piondtls.TLS_PSK_WITH_AES_128_CBC_SHA256,
 		},
 		ExtendedMasterSecret: piondtls.RequestExtendedMasterSecret,
 	}
