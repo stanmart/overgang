@@ -7,9 +7,9 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags="-s -w" -o /overgang ./cmd/overgang
 
-# Runs as root: the host's /var/lib/overgang is mounted at /data, as for the rest of the
-# Home Assistant stack.
-FROM gcr.io/distroless/static-debian12
+# Runs as distroless's nonroot user (65532): the process holds a Home Assistant token
+# and faces the LAN, and UDP 5684 needs no privilege. /data must be writable by 65532.
+FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /overgang /overgang
 EXPOSE 5684/udp
 ENTRYPOINT ["/overgang"]
