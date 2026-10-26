@@ -4,8 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"testing"
 	"time"
+
+	piondtls "github.com/pion/dtls/v3"
+	"github.com/plgd-dev/go-coap/v3/message"
+	"github.com/plgd-dev/go-coap/v3/message/codes"
+	"github.com/plgd-dev/go-coap/v3/udp/coder"
 
 	"github.com/stanmart/overgang/internal/client"
 	"github.com/stanmart/overgang/internal/config"
@@ -259,4 +265,67 @@ func TestDumpAndControl(tt *testing.T) {
 	if l := light(getJSON(tt, c, devicePath(ids["light.ceiling"]))); l[t.AttrOnOff] != 0.0 {
 		tt.Errorf("ceiling after All off: %v", l)
 	}
+}
+
+// A peer that observes a light and then stops acknowledging must not hold up anyone
+// else: notifications to it are confirmable, and used to block every state update
+// until its connection timed out.
+func TestSilentObserverDoesNotStallOthers(tt *testing.T) {
+	addr, ids := start(tt)
+	c := connect(tt, addr)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	silent := silentObserver(tt, addr, devicePath(ids["light.ceiling"]))
+	defer silent.Close()
+
+	for i, body := range []string{`{"3311":[{"5850":1}]}`, `{"3311":[{"5850":0}]}`, `{"3311":[{"5850":1}]}`} {
+		start := time.Now()
+		if err := c.Put(ctx, devicePath(ids["light.ceiling"]), []byte(body)); err != nil {
+			tt.Fatalf("write %d: %v", i, err)
+		}
+		if d := time.Since(start); d > 2*time.Second {
+			tt.Fatalf("write %d took %v with a silent observer around", i, d)
+		}
+	}
+}
+
+// silentObserver pairs, observes path with a raw CoAP request, reads the first answer
+// and then never reads or acknowledges anything again.
+func silentObserver(tb testing.TB, addr, path string) net.Conn {
+	tb.Helper()
+	ctx := context.Background()
+	psk, err := client.Pair(ctx, addr, code, "silent")
+	if err != nil {
+		tb.Fatal(err)
+	}
+	raddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	conn, err := piondtls.Dial("udp", raddr, &piondtls.Config{
+		PSK:             func([]byte) ([]byte, error) { return []byte(psk), nil },
+		PSKIdentityHint: []byte("silent"),
+		CipherSuites:    []piondtls.CipherSuiteID{piondtls.TLS_PSK_WITH_AES_128_CCM_8},
+	})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	opts := make(message.Options, 0, 8)
+	buf := make([]byte, 64)
+	opts, _, _ = opts.SetPath(buf, "/"+path)
+	opts, _, _ = opts.SetObserve(buf[32:], 0)
+	req := message.Message{Token: message.Token("tok1"), Options: opts, Code: codes.GET, MessageID: 1, Type: message.Confirmable}
+	out := make([]byte, 256)
+	n, err := coder.DefaultCoder.Encode(req, out)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	if _, err := conn.Write(out[:n]); err != nil {
+		tb.Fatal(err)
+	}
+	if _, err := conn.Read(make([]byte, 2048)); err != nil {
+		tb.Fatal(err)
+	}
+	return conn
 }

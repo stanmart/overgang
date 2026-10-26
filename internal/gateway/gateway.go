@@ -49,10 +49,9 @@ type Server struct {
 	bridge *bridge.Bridge
 	store  *state.Store
 
-	mu        sync.Mutex
-	observers map[string]map[*observer]bool // path → observers
-	hooked    map[mux.Conn]bool             // conns with an on-close cleanup registered
-	addr      string
+	mu    sync.Mutex
+	peers map[mux.Conn]*peer // connections holding observations
+	addr  string
 	// Gateway settings the app writes, such as the daylight saving rules. They are
 	// kept in memory and echoed back; nothing acts on them.
 	settings map[string]any
@@ -78,19 +77,12 @@ func (s *Server) uuid() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
 
-type observer struct {
-	conn  mux.Conn
-	token []byte
-	seq   uint32
-}
-
 func New(cfg Config, br *bridge.Bridge, store *state.Store) *Server {
 	s := &Server{
 		cfg:       cfg,
 		bridge:    br,
 		store:     store,
-		observers: map[string]map[*observer]bool{},
-		hooked:    map[mux.Conn]bool{},
+		peers:     map[mux.Conn]*peer{},
 		settings:  maps.Clone(observedSettings),
 		started:   time.Now().Unix(),
 		resources: maps.Clone(cfg.Resources),
@@ -223,8 +215,13 @@ func (s *Server) handle(w mux.ResponseWriter, r *mux.Message) {
 		obs, err := r.Options().Observe()
 		switch {
 		case err == nil && obs == 0:
-			seq := s.observe(w.Conn(), r.Token(), path)
-			s.respond(w, code, payload, message.Option{ID: message.Observe, Value: observeValue(seq)})
+			if seq, ok := s.observe(w.Conn(), r.Token(), path); ok {
+				s.respond(w, code, payload, message.Option{ID: message.Observe, Value: observeValue(seq)})
+			} else {
+				// Answering without the Observe option tells the peer it isn't observing.
+				log.Warn("too many observations on one connection")
+				s.respond(w, code, payload)
+			}
 		case err == nil && obs == 1:
 			s.unobserve(w.Conn(), r.Token(), path)
 			s.respond(w, code, payload)
@@ -376,7 +373,7 @@ func (s *Server) put(ctx context.Context, path string, body []byte) codes.Code {
 		s.mu.Lock()
 		s.resources[path] = json.RawMessage(bytes.Clone(body))
 		s.mu.Unlock()
-		go s.notify(path)
+		s.notify(path)
 		return codes.Changed
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
@@ -419,100 +416,6 @@ func (s *Server) put(ctx context.Context, path string, body []byte) codes.Code {
 	}
 	slog.Error("backend call failed", "path", path, "err", err)
 	return codes.ServiceUnavailable
-}
-
-func (s *Server) observe(c mux.Conn, token []byte, path string) uint32 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.observers[path] == nil {
-		s.observers[path] = map[*observer]bool{}
-	}
-	for o := range s.observers[path] {
-		if o.conn == c && bytes.Equal(o.token, token) {
-			return o.seq
-		}
-	}
-	o := &observer{conn: c, token: bytes.Clone(token), seq: 2}
-	s.observers[path][o] = true
-	if !s.hooked[c] {
-		s.hooked[c] = true
-		c.AddOnClose(func() { s.dropConn(c) })
-	}
-	return o.seq
-}
-
-func (s *Server) unobserve(c mux.Conn, token []byte, path string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for o := range s.observers[path] {
-		if o.conn == c && bytes.Equal(o.token, token) {
-			delete(s.observers[path], o)
-		}
-	}
-}
-
-func (s *Server) dropConn(c mux.Conn) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.hooked, c)
-	for _, set := range s.observers {
-		for o := range set {
-			if o.conn == c {
-				delete(set, o)
-			}
-		}
-	}
-}
-
-// notify sends the current state of each path to its observers.
-func (s *Server) notify(paths ...string) {
-	seen := map[string]bool{}
-	for _, path := range paths {
-		if seen[path] {
-			continue
-		}
-		seen[path] = true
-		s.mu.Lock()
-		var targets []*observer
-		for o := range s.observers[path] {
-			o.seq++
-			targets = append(targets, &observer{conn: o.conn, token: o.token, seq: o.seq})
-		}
-		s.mu.Unlock()
-		if len(targets) == 0 {
-			continue
-		}
-		code, payload := s.render(path)
-		if code != codes.Content {
-			continue
-		}
-		body, err := json.Marshal(payload)
-		if err != nil {
-			continue
-		}
-		for _, o := range targets {
-			if err := sendNotification(o, body); err != nil {
-				slog.Warn("cannot notify observer", "path", path, "err", err)
-			}
-		}
-	}
-}
-
-func sendNotification(o *observer, body []byte) error {
-	m := o.conn.AcquireMessage(o.conn.Context())
-	defer o.conn.ReleaseMessage(m)
-	m.SetCode(codes.Content)
-	m.SetToken(o.token)
-	m.SetContentFormat(message.AppJSON)
-	m.SetObserve(o.seq & 0xffffff)
-	m.SetBody(bytes.NewReader(body))
-	return o.conn.WriteMessage(m)
-}
-
-func observeValue(seq uint32) []byte {
-	buf := make([]byte, 4)
-	n, _ := message.EncodeUint32(buf, seq)
-	return buf[:n]
 }
 
 func randomKey() string {
