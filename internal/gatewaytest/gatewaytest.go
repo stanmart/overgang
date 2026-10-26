@@ -38,7 +38,7 @@ func Start(tb testing.TB, rooms []config.Room, securityCode string) (string, *st
 	gw := gateway.New(gateway.Config{
 		Listen:       "127.0.0.1:0",
 		SecurityCode: securityCode,
-		Firmware:     "1.21.31",
+		Firmware:     "1.21.57",
 		GatewayID:    "020000004f47",
 	}, br, store)
 	ready := make(chan struct{})

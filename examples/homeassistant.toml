@@ -10,7 +10,7 @@ security_code_file = "/var/lib/overgang/security-code"
 state_file = "/var/lib/overgang/state.json"
 # Any locally administered MAC works; it only names the gateway.
 mac = "02:00:00:00:4f:47"
-firmware = "1.21.31"
+firmware = "1.21.57"
 mdns = true
 
 [backend]

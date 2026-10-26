@@ -70,7 +70,7 @@ func Load(path string) (*Config, error) {
 			Listen:    ":5684",
 			StateFile: "overgang-state.json",
 			MAC:       "02:00:00:00:4f:47",
-			Firmware:  "1.21.31",
+			Firmware:  "1.21.57",
 			MDNS:      true,
 		},
 		Backend: Backend{Kind: "fake"},
