@@ -242,6 +242,10 @@ func TestDumpAndControl(tt *testing.T) {
 	if evening[t.AttrName] != "Evening" || evening[t.AttrMoodPredefined] != 2.0 || len(evening[t.AttrMoodLights].([]any)) != 1 || len(evening[t.AttrMoodPlugs].([]any)) != 1 {
 		tt.Errorf("Evening scene: %v", evening)
 	}
+	// Lights in a scene carry full settings; the app waits for lights to match them.
+	if l := evening[t.AttrMoodLights].([]any)[0].(map[string]any); l[t.AttrDimmer] == nil || l[t.AttrID] != float64(ids["light.ceiling"]) {
+		tt.Errorf("Evening scene light: %v", l)
+	}
 	superPath := fmt.Sprintf("%s/%d", t.PathGroups, groups[3])
 	if err := put(superPath, fmt.Sprintf(`{"9039":%d}`, sceneIDs[1])); err != nil {
 		tt.Fatal(err)

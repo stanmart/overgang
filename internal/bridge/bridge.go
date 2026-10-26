@@ -263,7 +263,11 @@ func (b *Bridge) Update(e backend.Entity) {
 		paths = append(paths, groupPath(g.ID))
 	}
 	if d := b.deviceByEnt[e.ID]; d != nil && d.Kind == KindLight {
+		// Scenes show their lights' current settings, so they change too.
 		paths = append(paths, groupPath(b.superGroup.ID))
+		for _, sc := range b.superGroup.scenes {
+			paths = append(paths, fmt.Sprintf("%s/%d/%d", t.PathMoods, b.superGroup.ID, sc.ID))
+		}
 	}
 	notify := b.notify
 	b.mu.Unlock()
@@ -451,7 +455,9 @@ func (b *Bridge) Group(id int) (map[string]any, bool) {
 
 // Mood renders GET /15005/<group>/<mood>: a scene, as only the SuperGroup has moods.
 // "All off" lists every light and plug as off. A Home Assistant scene lists the lights
-// it contains as on; their exact settings stay in Home Assistant.
+// it contains as on, with their current settings: Home Assistant doesn't expose a
+// scene's settings, and the app waits after activating a scene until every light
+// matches it, as on the real gateway.
 func (b *Bridge) Mood(groupID, moodID int) (map[string]any, bool) {
 	g := b.groupByID[groupID]
 	if g == nil {
@@ -462,11 +468,11 @@ func (b *Bridge) Mood(groupID, moodID int) (map[string]any, bool) {
 		return nil, false
 	}
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	inScene := map[string]bool{}
 	for _, id := range b.entities[sc.entity].Strings("entity_id") {
 		inScene[id] = true
 	}
-	b.mu.Unlock()
 
 	lights, plugs := []any{}, []any{}
 	for _, d := range b.devices {
@@ -476,7 +482,12 @@ func (b *Bridge) Mood(groupID, moodID int) (map[string]any, bool) {
 		case sc.allOff && d.Kind == KindPlug:
 			plugs = append(plugs, map[string]any{t.AttrOnOff: 0, t.AttrID: d.ID})
 		case inScene[d.Entity] && d.Kind == KindLight:
-			lights = append(lights, map[string]any{t.AttrOnOff: 1, t.AttrID: d.ID})
+			e := b.entities[d.Entity]
+			l := b.lightState(d.Entity, e, capabilitiesOf(e))
+			l[t.AttrOnOff], l[t.AttrID] = 1, d.ID
+			delete(l, t.AttrUnknown5849)
+			delete(l, t.AttrUnknown5717)
+			lights = append(lights, l)
 		case inScene[d.Entity] && d.Kind == KindPlug:
 			plugs = append(plugs, map[string]any{t.AttrOnOff: 1, t.AttrID: d.ID})
 		}
@@ -563,7 +574,9 @@ func (b *Bridge) SetGroup(ctx context.Context, id int, body map[string]any) erro
 		}
 		b.mu.Lock()
 		b.activeMood[g.ID] = sc.ID
+		notify := b.notify
 		b.mu.Unlock()
+		notify(groupPath(g.ID))
 		return b.applyScene(ctx, sc)
 	}
 	service, data, err := lightCommand(body)
