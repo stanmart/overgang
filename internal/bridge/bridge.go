@@ -6,6 +6,7 @@ package bridge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -610,12 +611,16 @@ func first(v any) (map[string]any, error) {
 }
 
 // intVal reads an integer from a decoded JSON object. Both json.Number (from a
-// UseNumber decoder) and float64 are accepted.
+// UseNumber decoder) and float64 are accepted. The app sends some integers with a
+// fraction, such as a blind position of 73.0, so those are rounded.
 func intVal(m map[string]any, key string) (int, bool) {
 	switch v := m[key].(type) {
-	case interface{ Int64() (int64, error) }:
-		n, err := v.Int64()
-		return int(n), err == nil
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return int(n), true
+		}
+		f, err := v.Float64()
+		return int(math.Round(f)), err == nil
 	case float64:
 		return int(v), true
 	case int:

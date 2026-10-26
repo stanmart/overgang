@@ -164,8 +164,9 @@ func TestDumpAndControl(tt *testing.T) {
 		tt.Error("rename was accepted")
 	}
 
-	// Blind: the app's 0 is open, Home Assistant's 100.
-	if err := put(devicePath(ids["cover.blind"]), `{"15015":[{"5536":30}]}`); err != nil {
+	// Blind: the app's 0 is open, Home Assistant's 100. The app sends positions with a
+	// fraction.
+	if err := put(devicePath(ids["cover.blind"]), `{"15015":[{"5536":30.0}]}`); err != nil {
 		tt.Fatal(err)
 	}
 	blind := getJSON(tt, c, devicePath(ids["cover.blind"]))[t.AttrBlindControl].([]any)[0].(map[string]any)
