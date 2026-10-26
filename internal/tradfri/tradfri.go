@@ -132,13 +132,17 @@ const (
 	MoodIDBase   = 196608
 )
 
-// The three white presets the app sends as AttrColorHex for white-spectrum bulbs, with
-// the colour temperature each stands for.
+// The white presets the app sends as AttrColorHex for white-spectrum bulbs, with the
+// colour temperature each stands for, coolest first. pytradfri documents only three;
+// the app on gateway firmware 1.21 uses five, and a real gateway reports f2eccf for
+// 333 mireds. The two new steps are placed to make an even 4000–2200 K scale.
 var WhitePresets = []struct {
 	Hex    string
 	Mireds int
 }{
-	{"f5faf6", 250}, // cool white
-	{"f1e0b5", 370}, // warm white
-	{"efd275", 454}, // warm glow
+	{"f5faf6", 250}, // 4000 K, cool white
+	{"f3f3e3", 286}, // 3500 K
+	{"f2eccf", 333}, // 3000 K
+	{"f1e0b5", 370}, // 2700 K, warm white
+	{"efd275", 454}, // 2200 K, warm glow
 }
